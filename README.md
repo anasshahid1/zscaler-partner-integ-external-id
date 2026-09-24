@@ -61,6 +61,26 @@ The External ID is generated once and stored in `~/.zscaler/shared-external-id`;
 pass `--external-id <value>` to supply your own. Re-running is safe: existing
 accounts are skipped and re-verified.
 
+### Using access keys instead of profiles
+
+If you don't want to set up AWS CLI profiles, put the keys directly in the row:
+
+```bash
+cp examples/accounts-creds.csv examples/accounts.local.csv   # *.local.csv is gitignored
+# edit examples/accounts.local.csv and fill in the keys
+python3 cli/onboard_shared.py examples/accounts.local.csv
+```
+
+```csv
+account_name,aws_account_id,aws_access_key_id,aws_secret_access_key,aws_session_token,iam_role_name
+prod-east,111111111111,AKIA...,<secret>,,ZscalerDiscoveryRole
+```
+
+`aws_session_token` is only needed for temporary (STS/SSO) credentials. Keys are
+handed to the `aws` CLI through environment variables for that subprocess only;
+they are never logged, printed or written anywhere. Keys in a row take precedence
+over `aws_profile`. Delete the `.local.csv` when done.
+
 ### Without AWS credentials in the script
 
 ```bash
