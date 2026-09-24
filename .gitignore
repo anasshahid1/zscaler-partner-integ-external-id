@@ -1,0 +1,6 @@
+config.json
+onboard-results.csv
+generated-scripts/
+__pycache__/
+*.pyc
+.DS_Store

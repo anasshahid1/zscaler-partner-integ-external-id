@@ -1,0 +1,7 @@
+{
+  "client_id": "your_client_id_here",
+  "client_secret": "your_client_secret_here",
+  "vanity_domain": "your_vanity_domain",
+  "cloud": "zscalerthree",
+  "login_domain": ""
+}
