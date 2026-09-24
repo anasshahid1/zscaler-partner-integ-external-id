@@ -29,6 +29,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -89,14 +90,22 @@ def zscaler_register(auth, name, aws_id, role, ext, regions, dry):
     return zid, "created"
 
 
-def zscaler_recheck(auth, zid, role, ext):
-    r = auth.put(f"/discoveryService/{zid}/permissions", {"discoveryRole": role, "externalId": ext})
-    if not isinstance(r, dict):
-        return "unknown"
-    st = r.get("status", {})
-    assume = st.get("assumeRole", "?")
-    denied = [k for k, v in st.items() if v != "Allowed"]
-    return "Allowed" if assume == "Allowed" and not denied else f"Denied ({', '.join(denied) or r.get('_error', '')})"
+def zscaler_recheck(auth, zid, role, ext, attempts=4, wait=10):
+    """Force Zscaler to re-test the role. Retries because IAM trust-policy changes take a few
+    seconds to propagate, which otherwise shows up as a false 'Denied'."""
+    result = "unknown"
+    for n in range(1, attempts + 1):
+        r = auth.put(f"/discoveryService/{zid}/permissions", {"discoveryRole": role, "externalId": ext})
+        if isinstance(r, dict):
+            st = r.get("status", {})
+            denied = [k for k, v in st.items() if v != "Allowed"]
+            if st.get("assumeRole") == "Allowed" and not denied:
+                return "Allowed" if n == 1 else f"Allowed (after {n} tries)"
+            result = f"Denied ({', '.join(denied) or r.get('_error', '')})"
+        if n < attempts:
+            log(f"    verify  : {result} -- retrying in {wait}s ({n}/{attempts})")
+            time.sleep(wait)
+    return result
 
 
 # --------------------------------------------------------------------------- AWS
