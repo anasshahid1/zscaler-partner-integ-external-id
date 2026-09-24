@@ -7,7 +7,12 @@ For every account in the CSV:
   2. AWS:     create/update IAM role via Zscaler's CloudFormation template (needs an AWS profile)
   3. Zscaler: force a permissions re-check and report Allowed/Denied
 
-CSV columns:  account_name,aws_account_id,aws_profile[,iam_role_name]
+CSV columns:
+  account_name,aws_account_id[,iam_role_name]            always
+  aws_profile                                             AWS auth option 1: named CLI profile
+  aws_access_key_id,aws_secret_access_key[,aws_session_token]
+                                                          AWS auth option 2: keys in the row
+                                                          (keep such files out of git: *.local.csv is ignored)
 
 Usage:
   python3 onboard_shared.py accounts.csv                       # auto-generates and saves external ID
@@ -96,32 +101,57 @@ def zscaler_recheck(auth, zid, role, ext):
 
 # --------------------------------------------------------------------------- AWS
 
-def aws(profile, *args, region=None):
-    cmd = ["aws", "--profile", profile] + (["--region", region] if region else []) + list(args)
-    p = subprocess.run(cmd, capture_output=True, text=True)
+def aws_creds_from_row(row):
+    """Return (label, cli_args, env) describing how to authenticate the aws CLI for this row.
+
+    Priority: explicit keys in the row > aws_profile > None (no AWS side for this row).
+    Keys are passed to the subprocess via environment only; they are never logged or written.
+    """
+    key = (row.get("aws_access_key_id") or "").strip()
+    secret = (row.get("aws_secret_access_key") or "").strip()
+    token = (row.get("aws_session_token") or "").strip()
+    profile = (row.get("aws_profile") or "").strip()
+    if key or secret:
+        if not (key and secret):
+            return None, None, None
+        env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
+        env.update({"AWS_ACCESS_KEY_ID": key, "AWS_SECRET_ACCESS_KEY": secret})
+        if token:
+            env["AWS_SESSION_TOKEN"] = token
+        return f"keys {key[:4]}...{key[-4:]}", [], env
+    if profile:
+        return f"profile '{profile}'", ["--profile", profile], None
+    return None, None, None
+
+
+def aws(creds, *args, region=None):
+    _, cli_args, env = creds
+    cmd = ["aws"] + cli_args + (["--region", region] if region else []) + list(args)
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env)
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
-def aws_ensure_role(profile, aws_id, role, ext, region, template_file, dry):
-    rc, out, err = aws(profile, "sts", "get-caller-identity", "--query", "Account", "--output", "text")
+def aws_ensure_role(creds, aws_id, role, ext, region, template_file, dry):
+    label = creds[0]
+    rc, out, err = aws(creds, "sts", "get-caller-identity", "--query", "Account", "--output", "text")
     if rc != 0:
-        return f"FAILED: profile '{profile}' not usable: {err[:120]}"
+        return f"FAILED: {label} not usable: {err[:120]}"
     if out != aws_id:
-        return f"FAILED: profile '{profile}' is account {out}, expected {aws_id}"
+        return f"FAILED: {label} is account {out}, expected {aws_id}"
 
-    rc, _, _ = aws(profile, "iam", "get-role", "--role-name", role)
+    rc, _, _ = aws(creds, "iam", "get-role", "--role-name", role)
     if rc == 0:
         if dry:
             return "would update trust policy"
         trust = json.dumps({"Version": "2012-10-17", "Statement": [{
             "Effect": "Allow", "Principal": {"AWS": TRUSTED_ROLE}, "Action": "sts:AssumeRole",
             "Condition": {"StringEquals": {"sts:ExternalId": ext}}}]})
-        rc, _, err = aws(profile, "iam", "update-assume-role-policy", "--role-name", role, "--policy-document", trust)
+        rc, _, err = aws(creds, "iam", "update-assume-role-policy", "--role-name", role, "--policy-document", trust)
         return "trust policy updated" if rc == 0 else f"FAILED: {err[:150]}"
 
     if dry:
         return "would deploy CloudFormation stack"
-    rc, out, err = aws(profile, "cloudformation", "deploy",
+    rc, out, err = aws(creds, "cloudformation", "deploy",
                        "--stack-name", STACK_NAME, "--template-file", template_file,
                        "--capabilities", "CAPABILITY_NAMED_IAM", "--no-fail-on-empty-changeset",
                        "--parameter-overrides", f"TrustingAccountRoleName={role}",
@@ -149,9 +179,11 @@ def main():
 
     with open(args.csv_file) as f:
         rows = list(csv.DictReader(f))
-    need = {"account_name", "aws_account_id"} | (set() if args.skip_aws else {"aws_profile"})
-    if not rows or not need.issubset(rows[0].keys()):
-        sys.exit(f"CSV needs columns: {', '.join(sorted(need))}")
+    cols = set(rows[0].keys()) if rows else set()
+    if not rows or not {"account_name", "aws_account_id"}.issubset(cols):
+        sys.exit("CSV needs columns: account_name, aws_account_id")
+    if not args.skip_aws and not ({"aws_profile", "aws_access_key_id"} & cols):
+        sys.exit("CSV needs aws_profile or aws_access_key_id/aws_secret_access_key columns (or use --skip-aws)")
 
     ext = get_external_id(args.external_id)
     log(f"\nShared external ID: {ext}")
@@ -166,15 +198,18 @@ def main():
     for i, row in enumerate(rows, 1):
         name, aws_id = row["account_name"].strip(), row["aws_account_id"].strip()
         role = (row.get("iam_role_name") or "").strip() or DEFAULT_ROLE
-        profile = (row.get("aws_profile") or "").strip()
-        log(f"[{i}/{len(rows)}] {name} ({aws_id})")
+        creds = aws_creds_from_row(row)
+        log(f"[{i}/{len(rows)}] {name} ({aws_id})" + (f"  [aws via {creds[0]}]" if creds[0] else ""))
 
         zid, zs_status = zscaler_register(auth, name, aws_id, role, ext, regions, args.dry_run)
         log(f"    zscaler : {zs_status}" + (f"  (id {zid})" if zid and zid != "-" else ""))
         aws_status, perm = "skipped", "skipped"
         if zid and not zs_status.startswith("FAILED"):
             if not args.skip_aws:
-                aws_status = aws_ensure_role(profile, aws_id, role, ext, args.region, template, args.dry_run)
+                if creds[0]:
+                    aws_status = aws_ensure_role(creds, aws_id, role, ext, args.region, template, args.dry_run)
+                else:
+                    aws_status = "skipped (no aws_profile or keys in row)"
                 log(f"    aws     : {aws_status}")
             if not args.dry_run and not aws_status.startswith("FAILED"):
                 perm = zscaler_recheck(auth, zid, role, ext)
