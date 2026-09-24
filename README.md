@@ -19,9 +19,20 @@ accounts and deployed with a single StackSet parameter set.
 
 ## Setup
 
+1. Copy the Zscaler credentials template and fill it in (do not commit):
+
 ```bash
-python3 cli/zscaler_partner.py configure     # saves ~/.zscaler/config.json
+cp cli/zscaler-creds.example.csv cli/zscaler.local.csv
+# edit cli/zscaler.local.csv with your OneAPI client_id, client_secret, vanity_domain
 ```
+
+CSV columns:
+```csv
+client_id,client_secret,vanity_domain,cloud,login_domain
+your_client_id,your_client_secret,your_vanity,zscalerthree,zslogin.net
+```
+
+`cloud` defaults to `zscalerthree`; `login_domain` defaults to `zslogin.net`. These credentials are never logged, printed, or committed (`*.local.csv` is gitignored).
 
 ## Onboard
 

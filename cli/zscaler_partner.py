@@ -61,39 +61,43 @@ RATE_LIMIT_WAIT = 2
 # Helpers
 # ---------------------------------------------------------------------------
 
-def load_config():
+def load_config(csv_path=None):
+    """Load Zscaler credentials from a CSV (default: no fallback). CSV must contain columns
+    client_id, client_secret, vanity_domain[, cloud, login_domain]."""
+    if csv_path:
+        if not Path(csv_path).exists():
+            print(f"Error: Zscaler credentials CSV not found: {csv_path}")
+            sys.exit(1)
+        with open(csv_path) as f:
+            rows = list(csv.DictReader(f))
+        if not rows:
+            print(f"Error: Zscaler credentials CSV is empty: {csv_path}")
+            sys.exit(1)
+        row = rows[0]
+        required = {"client_id", "client_secret", "vanity_domain"}
+        missing = required - set(row.keys())
+        if missing:
+            print(f"Error: CSV missing columns: {', '.join(sorted(missing))}")
+            sys.exit(1)
+        if not (row["client_id"] or "").strip() or not (row["client_secret"] or "").strip() or not (row["vanity_domain"] or "").strip():
+            print("Error: client_id, client_secret, and vanity_domain are required in CSV.")
+            sys.exit(1)
+        return {
+            "client_id": row["client_id"].strip(),
+            "client_secret": row["client_secret"].strip(),
+            "vanity_domain": row["vanity_domain"].strip(),
+            "cloud": (row.get("cloud") or "").strip() or "zscalerthree",
+            "login_domain": (row.get("login_domain") or "").strip(),
+        }
+
+    # Legacy ~/.zscaler/config.json path
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE) as f:
             return json.load(f)
 
-    # No config found -- prompt interactively
-    print("\nNo config found. Enter Zscaler credentials:\n")
-
-    client_id = input("Client ID: ").strip()
-    client_secret = input("Client Secret: ").strip()
-    vanity_domain = input("Vanity Domain: ").strip()
-
-    clouds = "zscaler, zscalerone, zscalertwo, zscalerthree, zscalerbeta"
-    cloud = input(f"Cloud ({clouds}): ").strip() or "zscalerthree"
-    login_domain = input("Login Domain [Enter for default]: ").strip()
-
-    if not client_id or not client_secret or not vanity_domain:
-        print("Error: client_id, client_secret, and vanity_domain are required.")
-        sys.exit(1)
-
-    config = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "vanity_domain": vanity_domain,
-        "cloud": cloud,
-        "login_domain": login_domain,
-    }
-
-    save_choice = input("\nSave for future use? (yes/no): ").strip().lower()
-    if save_choice in ("yes", "y"):
-        save_config(config)
-
-    return config
+    print("\nNo Zscaler credentials CSV supplied and no ~/.zscaler/config.json found.")
+    print("Create cli/zscaler.local.csv with columns: client_id, client_secret, vanity_domain, cloud, login_domain")
+    sys.exit(1)
 
 
 def save_config(config):
