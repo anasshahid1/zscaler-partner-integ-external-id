@@ -36,7 +36,56 @@ your_client_id,your_client_secret,your_vanity,zscalerthree,zslogin.net
 
 ## Onboard
 
-1. Edit `examples/accounts-shared.csv` -- one row per account:
+Pick one of the three AWS auth methods below for each account, then run the same
+command once for the whole CSV.
+
+### 1. AWS CLI profiles (one named profile per account)
+
+```bash
+cp examples/accounts-shared.csv examples/accounts.local.csv   # *.local.csv is gitignored
+# edit examples/accounts.local.csv
+python3 cli/onboard_shared.py examples/accounts.local.csv --dry-run
+python3 cli/onboard_shared.py examples/accounts.local.csv
+```
+
+```csv
+account_name,aws_account_id,aws_profile,iam_role_name
+prod-east,111111111111,prod-east-admin,ZscalerDiscoveryRole
+prod-west,222222222222,prod-west-admin,ZscalerDiscoveryRole
+```
+
+### 2. Access keys per account (no profiles needed)
+
+```bash
+cp examples/accounts-creds.csv examples/accounts.local.csv   # *.local.csv is gitignored
+# edit examples/accounts.local.csv
+python3 cli/onboard_shared.py examples/accounts.local.csv --dry-run
+python3 cli/onboard_shared.py examples/accounts.local.csv
+```
+
+```csv
+account_name,aws_account_id,aws_access_key_id,aws_secret_access_key,aws_session_token,iam_role_name
+prod-east,111111111111,AKIA...,<secret>,,ZscalerDiscoveryRole
+prod-west,222222222222,ASIA...,<secret>,<token>,ZscalerDiscoveryRole
+```
+
+`aws_session_token` is only needed for temporary (STS/SSO) credentials.
+
+### 3. Zscaler side only; deploy AWS role yourself (StackSet / Console)
+
+```bash
+cp examples/accounts-shared.csv examples/accounts.local.csv
+# remove the aws_profile / aws_access_key_id columns, keep account_name,aws_account_id
+python3 cli/onboard_shared.py examples/accounts.local.csv --skip-aws
+# deploy the CloudFormation template in each AWS account, then re-run to verify
+```
+
+## Per-account flow
+
+Regardless of method, for each row the script:
+1. **Zscaler** -- `POST /publicCloudInfo` with the shared `externalId` (skipped if already registered)
+2. **AWS** -- deploys Zscaler's CloudFormation template with `ExternalId=<shared>` (or updates the trust policy if the role already exists)
+3. **Verify** -- `PUT /discoveryService/{id}/permissions` forces a re-check and prints `Allowed` / `Denied`
 
    ```csv
    account_name,aws_account_id,aws_profile,iam_role_name
@@ -71,26 +120,6 @@ Per account the script:
 The External ID is generated once and stored in `~/.zscaler/shared-external-id`;
 pass `--external-id <value>` to supply your own. Re-running is safe: existing
 accounts are skipped and re-verified.
-
-### Using access keys instead of profiles
-
-If you don't want to set up AWS CLI profiles, put the keys directly in the row:
-
-```bash
-cp examples/accounts-creds.csv examples/accounts.local.csv   # *.local.csv is gitignored
-# edit examples/accounts.local.csv and fill in the keys
-python3 cli/onboard_shared.py examples/accounts.local.csv
-```
-
-```csv
-account_name,aws_account_id,aws_access_key_id,aws_secret_access_key,aws_session_token,iam_role_name
-prod-east,111111111111,AKIA...,<secret>,,ZscalerDiscoveryRole
-```
-
-`aws_session_token` is only needed for temporary (STS/SSO) credentials. Keys are
-handed to the `aws` CLI through environment variables for that subprocess only;
-they are never logged, printed or written anywhere. Keys in a row take precedence
-over `aws_profile`. Delete the `.local.csv` when done.
 
 ### Without AWS credentials in the script
 
