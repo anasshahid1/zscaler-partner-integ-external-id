@@ -1,3 +1,5 @@
+# Zscaler OneAPI credentials -- never commit real values
+cli/zscaler.local.csv
 config.json
 onboard-results.csv
 generated-scripts/
@@ -7,3 +9,5 @@ __pycache__/
 
 # never commit real credentials
 *.local.csv
+
+

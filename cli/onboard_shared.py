@@ -171,6 +171,8 @@ def download_template():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("csv_file")
+    p.add_argument("--zscaler-creds", default="cli/zscaler.local.csv",
+                   help="CSV with columns client_id, client_secret, vanity_domain[, cloud, login_domain]")
     p.add_argument("--external-id", help="shared external ID (default: reuse/generate ~/.zscaler/shared-external-id)")
     p.add_argument("--region", default="us-east-1", help="region for the CloudFormation stack (IAM is global)")
     p.add_argument("--skip-aws", action="store_true", help="only do the Zscaler side")
@@ -189,7 +191,7 @@ def main():
     log(f"\nShared external ID: {ext}")
     log(f"Accounts: {len(rows)}   AWS side: {'skipped' if args.skip_aws else 'enabled'}   dry-run: {args.dry_run}\n")
 
-    auth = ZscalerAuth(load_config())
+    auth = ZscalerAuth(load_config(args.zscaler_creds))
     auth.authenticate()
     regions = auth.get("/publicCloudInfo/supportedRegions") or []
     template = None if args.skip_aws or args.dry_run else download_template()
